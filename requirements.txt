@@ -1,7 +1,40 @@
+# Exact pins captured from the verified working environment (2026-07-06,
+# Python 3.11). If you bump one of the torch-family packages, bump them all
+# together — mismatched torch/torchvision/torchaudio binaries fail to load.
+
+# Web framework & server
 fastapi==0.109.2
 uvicorn==0.27.1
-pydantic==2.6.1
 python-multipart==0.0.9
+
+# Environment variables
+python-dotenv==1.2.1
+
+# Data validation
+pydantic==2.6.1
+
+# Orchestration (LangGraph wiring is the next step)
 langgraph==0.0.26
-google-genai==0.3.0
-PyMuPDF==1.23.21
+
+# Legacy Gemini pipeline (agents/agent_01_parser.py, agent_03_fusion.py)
+google-genai==0.3.0      # Gemini API
+PyMuPDF==1.23.21         # PDF text & link extraction (imported as fitz)
+httpx==0.28.1            # Async HTTP for agents/agent_02_crawler.py
+
+# Claude-based CV parser (agents/parser_agent.py)
+anthropic==0.116.0       # Claude API
+pypdf==6.14.2            # PDF text extraction
+python-docx==1.2.0       # DOCX text extraction
+
+# GitHub Crawler Agent (agents/github_crawler_agent.py)
+requests==2.34.2         # GitHub REST API calls
+
+# Job-Fit Scoring Agent (agents/job_fit_agent.py)
+# Local embeddings; chromadb deliberately NOT added yet — only needed once
+# we search across many stored candidates (see agents/job_fit_agent.py)
+sentence-transformers==5.6.0
+transformers==5.13.0
+torch==2.12.1
+torchvision==0.27.1
+torchaudio==2.11.0
+numpy==1.26.4

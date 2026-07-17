@@ -1,3 +1,4 @@
+from datetime import date
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
 
@@ -65,3 +66,57 @@ class CandidateSchema(BaseModel):
     job_fit_score: Optional[float] = Field(None, description="0-100 weighted match score")
     top_strengths: List[str] = Field(default_factory=list)
     top_risks: List[str] = Field(default_factory=list)
+
+
+# Minimal parsed-candidate model used by the Claude-based parser
+# (agents/parser_agent.py). Kept deliberately flexible: any field the
+# parser can't find in the CV is left as None / empty.
+
+class EducationEntry(BaseModel):
+    degree: Optional[str] = None
+    institution: Optional[str] = None
+    year: Optional[str] = None
+
+
+class WorkEntry(BaseModel):
+    company: Optional[str] = None
+    title: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    description: Optional[str] = None
+
+
+class NotableRepo(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    stars: int = 0
+    language: Optional[str] = None
+    last_updated: Optional[str] = None  # ISO timestamp of the last push
+
+
+class GithubProfile(BaseModel):
+    """Enrichment data from agents/github_crawler_agent.py."""
+    public_repos: int = 0
+    top_languages: List[str] = Field(default_factory=list)
+    notable_repos: List[NotableRepo] = Field(default_factory=list)
+    total_stars: int = 0
+    account_created: Optional[date] = None
+    contribution_summary: Optional[str] = None
+
+
+class Candidate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
+    education: List[EducationEntry] = Field(default_factory=list)
+    work_history: List[WorkEntry] = Field(default_factory=list)
+    skills: List[str] = Field(default_factory=list)
+    raw_text: Optional[str] = None
+    github_username: Optional[str] = None
+    github_profile: Optional[GithubProfile] = None
+
+    # Annotations added by the Fusion Agent (agents/fusion_agent.py)
+    skills_from_github: List[str] = Field(default_factory=list)
+    employment_gap_notes: List[str] = Field(default_factory=list)
+    data_quality_notes: List[str] = Field(default_factory=list)

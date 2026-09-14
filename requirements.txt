@@ -13,8 +13,9 @@ python-dotenv==1.2.1
 # Data validation
 pydantic==2.6.1
 
-# Orchestration (LangGraph wiring is the next step)
+# Orchestration (orchestrator/graph.py)
 langgraph==0.0.26
+langchain-core==0.1.53    # langgraph dependency; pinned so the graph API stays put
 
 # Legacy Gemini pipeline (agents/agent_01_parser.py, agent_03_fusion.py)
 google-genai==0.3.0      # Gemini API

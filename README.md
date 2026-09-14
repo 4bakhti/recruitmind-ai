@@ -24,10 +24,46 @@ recruitmind/
 │   ├── candidate.py        # Pydantic schemas (CandidateSchema + Candidate)
 │   ├── job_description.py  # JobDescription + JobFitResult
 │   └── report.py           # CandidateReport + ScoreBreakdown
-├── orchestrator/           # LangGraph state management (next step)
+├── orchestrator/
+│   ├── state.py            # PipelineState: the state flowing through the graph
+│   ├── nodes.py            # One thin node per agent
+│   └── graph.py            # LangGraph wiring + run_pipeline()
 └── tests/
     └── test_*.py
 ```
+
+## Pipeline
+
+The Claude agents are wired together by a LangGraph state machine
+(`orchestrator/graph.py`). Branches are edges, not buried `if`s:
+
+```text
+parse --+-- (parse failed) ---------------------------> END
+        +-- (GitHub URL) --> crawl --> fuse --+
+        +-- (no GitHub) ------------> fuse ---+
+                                              |
+                    +-- (no job) -------------+---> END
+                    +-- (job) --> score --+-- (no scores) --> END
+                                          +-- build_report --> END
+```
+
+Only parsing can end a run: every later stage degrades gracefully,
+recording what went wrong in the state instead of raising. The parse node
+retries once before giving up (`PARSE_MAX_ATTEMPTS` in
+`orchestrator/nodes.py`).
+
+```python
+from orchestrator import run_pipeline
+
+state = run_pipeline("resume.pdf", job)   # job is optional
+state["candidate"]        # None only if parsing failed outright
+state["report"]           # None if scoring/report was skipped or failed
+state["steps_completed"]  # e.g. ["parse", "crawl", "fuse", "score", "report"]
+state["errors"]           # why anything above is missing
+```
+
+`agents/fusion_agent.analyze_cv()` still works as the simple
+straight-line path for callers that only want a fused Candidate.
 
 ## 🚀 Setup
 
@@ -76,9 +112,10 @@ Then open http://localhost:8000/docs for the interactive API docs.
 | GET    | `/health`            | Health check |
 | POST   | `/parse-cv`          | Parse a single CV (PDF/DOCX) with the Claude parser agent; returns structured Candidate JSON |
 | POST   | `/crawl-github`      | Fetch a GitHub profile summary for a username (query param `github_username`) |
-| POST   | `/analyze-candidate` | Full Claude pipeline: parse → GitHub enrich → fuse; returns the annotated Candidate |
+| POST   | `/analyze-candidate` | Orchestrated pipeline: parse → GitHub enrich → fuse; returns the annotated Candidate |
 | POST   | `/score-fit`         | `/analyze-candidate` + job-fit scoring against a job description |
 | POST   | `/full-report`       | Everything: pipeline + scoring + recruiter report (JSON incl. Markdown in `report_markdown`) |
+| POST   | `/run-pipeline`      | Orchestrated pipeline with its trace: returns candidate, scores, report, `steps_completed` and `errors` (job description optional) |
 | POST   | `/api/v1/upload-cvs/`| Full Gemini pipeline: parse → crawl → fuse (bulk upload) |
 
 Examples:
@@ -108,3 +145,5 @@ python -m unittest discover -s tests
   tests load the local embedding model (first run downloads ~90 MB)
 - `tests/test_report_agent.py` — Claude mocked; the endpoint test runs the
   whole pipeline in-process with real local embeddings
+- `tests/test_orchestrator.py` — fully offline; every agent is mocked so the
+  tests cover the graph's routing and failure handling, not the agents

@@ -11,10 +11,8 @@ from agents.agent_02_crawler import enrich_candidate_profile
 from agents.agent_03_fusion import clean_and_fuse_profile
 from agents.parser_agent import parse_cv as parse_cv_with_claude
 from agents.github_crawler_agent import fetch_github_profile
-from agents.fusion_agent import analyze_cv
-from agents.job_fit_agent import score_fit
-from agents.report_agent import generate_report
 from models.job_description import JobDescription
+from orchestrator import run_pipeline
 
 app = FastAPI(
     title="RecruitMind AI API",
@@ -125,6 +123,19 @@ def _save_upload(file: UploadFile) -> str:
     return file_path
 
 
+def _run_or_422(file_path: str, job: JobDescription | None = None) -> dict:
+    """Run the orchestrated pipeline, or fail the request if the CV could
+    not be parsed at all. Every later stage degrades gracefully instead,
+    recording why in the returned state."""
+    state = run_pipeline(file_path, job)
+    if state.get("candidate") is None:
+        detail = "; ".join(state.get("errors", [])) or (
+            "Could not parse the CV. Check the server logs for details."
+        )
+        raise HTTPException(status_code=422, detail=detail)
+    return state
+
+
 @app.post("/parse-cv")
 def parse_cv_endpoint(file: UploadFile = File(...)):
     """
@@ -155,13 +166,8 @@ def analyze_candidate_endpoint(file: UploadFile = File(...)):
     """
     file_path = _save_upload(file)
     try:
-        candidate = analyze_cv(file_path)
-        if candidate is None:
-            raise HTTPException(
-                status_code=422,
-                detail="Could not parse the CV. Check the server logs for details.",
-            )
-        return candidate.model_dump(mode="json")
+        state = _run_or_422(file_path)
+        return state["candidate"].model_dump(mode="json")
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -197,16 +203,15 @@ def score_fit_endpoint(
 
     file_path = _save_upload(file)
     try:
-        candidate = analyze_cv(file_path)
-        if candidate is None:
+        state = _run_or_422(file_path, job)
+        if state.get("fit") is None:
             raise HTTPException(
-                status_code=422,
-                detail="Could not parse the CV. Check the server logs for details.",
+                status_code=502,
+                detail="; ".join(state.get("errors", [])) or "Scoring failed.",
             )
-        result = score_fit(candidate, job)
         return {
-            "candidate": candidate.model_dump(mode="json"),
-            "job_fit": result.model_dump(mode="json"),
+            "candidate": state["candidate"].model_dump(mode="json"),
+            "job_fit": state["fit"].model_dump(mode="json"),
         }
     finally:
         if os.path.exists(file_path):
@@ -237,15 +242,14 @@ def full_report_endpoint(
 
     file_path = _save_upload(file)
     try:
-        candidate = analyze_cv(file_path)
-        if candidate is None:
+        state = _run_or_422(file_path, job)
+        if state.get("report") is None:
             raise HTTPException(
-                status_code=422,
-                detail="Could not parse the CV. Check the server logs for details.",
+                status_code=502,
+                detail="; ".join(state.get("errors", []))
+                or "Report generation failed.",
             )
-        fit = score_fit(candidate, job)
-        report = generate_report(candidate, job, fit)
-        return report.model_dump(mode="json")
+        return state["report"].model_dump(mode="json")
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -266,6 +270,54 @@ def crawl_github_endpoint(github_username: str):
                    "(unknown user, rate limit, or network error — see logs).",
         )
     return profile.model_dump(mode="json")
+
+
+@app.post("/run-pipeline")
+def run_pipeline_endpoint(
+    file: UploadFile = File(...),
+    job_description: str | None = Form(
+        None,
+        description="Optional JobDescription as a JSON string. Omit it to "
+        "stop after fusion and get just the annotated candidate.",
+    ),
+):
+    """
+    The orchestrated pipeline with its full trace exposed.
+
+    Same work as /full-report, but the response says which nodes ran and
+    what went wrong, and a partial run still returns whatever it produced
+    instead of an error. Useful for debugging a CV that comes back thin.
+    """
+    job = None
+    if job_description:
+        try:
+            job = JobDescription.model_validate_json(job_description)
+        except ValidationError as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid job_description JSON: {e.error_count()} "
+                       f"validation error(s): {e}",
+            )
+
+    file_path = _save_upload(file)
+    try:
+        state = _run_or_422(file_path, job)
+        return {
+            "candidate": state["candidate"].model_dump(mode="json"),
+            "job_fit": (
+                state["fit"].model_dump(mode="json")
+                if state.get("fit") is not None else None
+            ),
+            "report": (
+                state["report"].model_dump(mode="json")
+                if state.get("report") is not None else None
+            ),
+            "steps_completed": state.get("steps_completed", []),
+            "errors": state.get("errors", []),
+        }
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
 
 if __name__ == "__main__":
